@@ -1,0 +1,161 @@
+initialize() {
+    defineConstant('dir','/home/noor/faststorage/popGen/final_experiments/admixed/data/simulation/adm_75/neutral');
+	defineConstant("chromLen", 1100000); //1100000
+	defineConstant("totGens", 13230); // 1*Nanc burn in + 5920 generations of our popsize + split + sweep dynamics -- must be used with recapitation
+	//13230
+	defineConstant("ancPopSize", 7310);
+	defineConstant("ancExpSize", 14474);
+	defineConstant("euAncSize", 1861);
+	defineConstant("euBotSize", 1032);
+	defineConstant("euFinalSize", 512000);
+	defineConstant("euInterSize", 9028);
+	defineConstant("afFinalSize", 424000);
+	defineConstant("ancExpTime", totGens-5920+1);
+    defineConstant('splitTimeConstant',rdunif(1,1640,2760)+1);
+	//defineConstant("splitTimeGen", rdunif(1,1640,2760)+1);
+	defineConstant("splitTime", totGens-splitTimeConstant); //interval 45 - 69 kya 
+	defineConstant("euBotTime", totGens-920+1);
+	defineConstant("afGrowthTime", totGens-205+1);
+	defineConstant("sweepMutGen", totGens-rdunif(1,200,(splitTimeConstant+10))); 	
+	defineConstant("selCoeff", exp(runif(1, log(0.001), log(0.11))));
+	//defineConstant('randomDrawForNeut',runif(1,0.1,0.9));
+	//defineConstant("neutTime", rdunif(1,400,900)); // defineConstant("neutTime", 800))
+	defineConstant("euGrowth1", 0.3037937e-2);
+	defineConstant("euGrowth2", 1.9892807e-2);
+	defineConstant("afGrowth", 1.66114836e-2);
+	defineConstant('afrAmrSize',9028);
+	defineConstant("afrAmrFinalSize", 512000);
+	defineConstant("admixGen", totGens-rdunif(1,10,18)); 
+	defineConstant('AfrAmrGrowthTime',totGens-7);
+	//initializeTreeSeq();
+	initializeMutationRate(1.2e-8);
+	initializeMutationType("m1", 0.5, "f", 0.0);// selection coefficient is 0 because its neutral right now.
+	initializeMutationType("m2", 0.5, "f", selCoeff); 
+	initializeGenomicElementType("g1", m1, 1.0);
+	initializeGenomicElement(g1, 0, chromLen-1);
+	initializeRecombinationRate(1e-8);
+}
+
+// ancient expansion in Africa
+s1 2000 late()
+{
+	cat("SETTING P1 SIZE TO " + ancExpSize + " AT GENERATION " + sim.generation + "\n");
+	p1.setSubpopulationSize(ancExpSize);
+}
+
+// Out-of-Africa split
+s2 2000
+{
+	cat("SPLITTING OFF P2 WITH INITIAL SIZE " + euAncSize + " AT GENERATION " + sim.generation + "\n");
+	sim.addSubpopSplit("p2", euAncSize, p1);
+}
+
+// european bottleneck and exponential growth
+s3 2000:3000
+{
+	newSize = asInteger(round((1+euGrowth1)^(sim.generation - (euBotTime-1)) * euBotSize));
+	if (newSize >= euInterSize)
+	{
+		newSize = euInterSize;
+		sim.deregisterScriptBlock(self);
+		cat("COMPLETED P2 GROWTH PHASE 1 WITH FINAL SIZE " + euInterSize + " AT GENERATION " + sim.generation + "\n");
+	}
+	p2.setSubpopulationSize(newSize);
+}
+
+s4 2000:3000 // second phase of exponential growth
+{
+	newSize = asInteger(round((1+euGrowth2)^(sim.generation - (afGrowthTime-1)) * euInterSize));
+	doneEu=F;
+	doneAf=F;
+	if (newSize >= euFinalSize)
+	{
+		newSize = euFinalSize;
+		doneEu=T;
+	}
+	p2.setSubpopulationSize(newSize);
+	
+	newSize = asInteger(round((1+afGrowth)^(sim.generation - (afGrowthTime-1)) * ancExpSize));
+	if (newSize >= afFinalSize)
+	{
+		newSize = afFinalSize;
+		doneAf=T;
+	}
+	p1.setSubpopulationSize(newSize);
+	
+	if (doneEu & doneAf)
+	{
+		sim.deregisterScriptBlock(self);
+		cat("COMPLETED RECENT GROWTH PHASE WITH FINAL SIZES " + afFinalSize + " AND " + euFinalSize + " AT GENERATION " + sim.generation + "\n");
+	}
+}
+
+
+s5 2000  //admixture
+{
+	cat('ADMIXTURE GENERATION : ' +  admixGen+ ' \n');
+
+	
+	afr_pop = 0.75; // african proportion ranging from 50% to 95%
+	cat('AFRICAN PROPORTION : ' +  afr_pop + ' \n');
+	eur_pop = 1 - afr_pop;
+	cat('EUROPEAN PROPORTION : ' +  eur_pop + ' \n');
+	
+	//afrAmrSize = asInteger((afr_pop *  afFinalSize) + (eur_pop * euFinalSize));
+	
+	cat('AFRICAN AMERICAN POPULATION SIZE : ' + afrAmrSize + '\n');
+	
+	sim.addSubpop('p3',afrAmrSize);
+	p3.setMigrationRates(c(p1,p2),c(afr_pop,eur_pop));
+
+}
+
+s6 2000
+{
+	p3.setMigrationRates(c(p1,p2),c(0.0,0.0));
+}
+
+s7 2000:2007 //exponential growth. Same as european population (s4)
+{
+	newSize = asInteger(round((1+euGrowth2)^(sim.generation - (afGrowthTime-1)) * euInterSize));
+	doneEu=F;
+	if (newSize >= afrAmrFinalSize)
+	{
+		newSize = afrAmrFinalSize;
+		doneEu=T;
+	}
+	p3.setSubpopulationSize(newSize);
+}
+
+s8 2007 late()
+{
+	p1.setSubpopulationSize(0);
+	p2.setSubpopulationSize(0);
+    
+    cat("SAVING TO " + dumpDir + "/slim_" + simID + ".dump\n");
+	sim.outputFull(dumpDir + "/slim_" + simID + ".dump");
+    
+    p3.outputMSSample(144,replace=F,filePath=dir+'/slim_' + simID + '_neutral.msOut');
+    
+	//cat("SAVING TO " + dumpDir + "/slim_" + simID + "_neutral.trees\n");
+    
+
+    
+	//sim.treeSeqOutput(dumpDir + "/slim_" + simID + "_neutral.trees");
+	
+	sim.simulationFinished();
+}
+
+1 { //here we add our ancient subpopulation, schedule our event blocks above, and get to work!
+	// save this run's identifier, used to save and restore
+	defineConstant("simID", getSeed());
+	sim.addSubpop("p1", ancPopSize);
+	sim.rescheduleScriptBlock(s1, start=ancExpTime, end=ancExpTime);
+	sim.rescheduleScriptBlock(s2, start=splitTime, end=splitTime);
+	sim.rescheduleScriptBlock(s3, start=euBotTime, end=afGrowthTime);
+	sim.rescheduleScriptBlock(s4, start=afGrowthTime, end=totGens);
+	sim.rescheduleScriptBlock(s5, start=admixGen, end=admixGen);
+	sim.rescheduleScriptBlock(s6, start=admixGen+1, end=admixGen+1);
+	sim.rescheduleScriptBlock(s7, start=AfrAmrGrowthTime, end=totGens);
+	sim.rescheduleScriptBlock(s8, start=totGens, end=totGens);
+}

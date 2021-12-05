@@ -1,0 +1,285 @@
+initialize() {
+	defineConstant("dumpDir", "/home/noor/faststorage/popGen/final_experiments/admixed/data/dump_sweeps"); //for cluster
+    defineConstant('dir','/home/noor/faststorage/popGen/final_experiments/admixed/data/simulation/adm_75/soft');
+	defineConstant("chromLen", 1100000); //1100000
+	defineConstant("totGens", 13230); // 1*Nanc burn in + 5920 generations of our popsize + split + sweep dynamics -- must be used with recapitation
+	//13230
+	defineConstant("ancPopSize", 7310);
+	defineConstant("ancExpSize", 14474);
+	defineConstant("euAncSize", 1861);
+	defineConstant("euBotSize", 1032);
+	defineConstant("euFinalSize", 512000);
+	defineConstant("euInterSize", 9028);
+	defineConstant("afFinalSize", 424000);
+	defineConstant("ancExpTime", totGens-5920+1);
+    defineConstant('splitTimeConstant',rdunif(1,1640,2760)+1);
+	//defineConstant("splitTimeGen", rdunif(1,1640,2760)+1);
+	defineConstant("splitTime", totGens-splitTimeConstant); //interval 45 - 69 kya 
+	defineConstant("euBotTime", totGens-920+1);
+	defineConstant("afGrowthTime", totGens-205+1);
+	defineConstant("sweepMutGen", totGens-rdunif(1,200,(splitTimeConstant+10))); 	
+	defineConstant("selCoeff", exp(runif(1, log(0.001), log(0.11))));
+	//defineConstant("selCoeff", 0.5);
+   defineConstant('randomDrawForNeut',runif(1,0.1,0.9));
+   maxNeutTime = totGens - sweepMutGen;
+	defineConstant("neutTime", asInteger(randomDrawForNeut * maxNeutTime));
+	//defineConstant("neutTime", 800);
+	defineConstant("euGrowth1", 0.3037937e-2);
+	defineConstant("euGrowth2", 1.9892807e-2);
+	defineConstant("afGrowth", 1.66114836e-2);
+	defineConstant('afrAmrSize',9028);
+	defineConstant("afrAmrFinalSize", 512000);
+	defineConstant("admixGen", totGens-rdunif(1,10,18)); 
+	defineConstant('AfrAmrGrowthTime',totGens-7);
+    defineConstant('sweepSite',550000-1);
+	//initializeTreeSeq();
+	initializeMutationRate(1.2e-8);
+	initializeMutationType("m1", 0.5, "f", 0.0);// selection coefficient is 0 because its neutral right now.
+	initializeMutationType("m2", 0.5, "f", selCoeff); 
+	initializeGenomicElementType("g1", m1, 1.0);
+	initializeGenomicElement(g1, 0, chromLen-1);
+	initializeRecombinationRate(1e-8);
+}
+
+// ancient expansion in Africa
+s1 2000 late()
+{
+	cat("SETTING P1 SIZE TO " + ancExpSize + " AT GENERATION " + sim.generation + "\n");
+	p1.setSubpopulationSize(ancExpSize);
+}
+
+// Out-of-Africa split
+s2 2000
+{
+	cat("SPLITTING OFF P2 WITH INITIAL SIZE " + euAncSize + " AT GENERATION " + sim.generation + "\n");
+	sim.addSubpopSplit("p2", euAncSize, p1);
+}
+
+// european bottleneck and exponential growth
+s3 2000:3000
+{
+	newSize = asInteger(round((1+euGrowth1)^(sim.generation - (euBotTime-1)) * euBotSize));
+	if (newSize >= euInterSize)
+	{
+		newSize = euInterSize;
+		sim.deregisterScriptBlock(self);
+		cat("COMPLETED P2 GROWTH PHASE 1 WITH FINAL SIZE " + euInterSize + " AT GENERATION " + sim.generation + "\n");
+	}
+	p2.setSubpopulationSize(newSize);
+}
+
+s4 2000:3000  // second phase of exponential growth
+{
+	newSize = asInteger(round((1+euGrowth2)^(sim.generation - (afGrowthTime-1)) * euInterSize));
+	doneEu=F;
+	doneAf=F;
+	if (newSize >= euFinalSize)
+	{
+		newSize = euFinalSize;
+		doneEu=T;
+	}
+	p2.setSubpopulationSize(newSize);
+	
+	newSize = asInteger(round((1+afGrowth)^(sim.generation - (afGrowthTime-1)) * ancExpSize));
+	if (newSize >= afFinalSize)
+	{
+		newSize = afFinalSize;
+		doneAf=T;
+	}
+	p1.setSubpopulationSize(newSize);
+	
+	if (doneEu & doneAf)
+	{
+		sim.deregisterScriptBlock(self);
+		cat("COMPLETED RECENT GROWTH PHASE WITH FINAL SIZES " + afFinalSize + " AND " + euFinalSize + " AT GENERATION " + sim.generation + "\n");
+	}
+}
+
+function (void) switchMutTypeNearPos(integer pos)
+{
+	muts = sim.mutationsOfType(m1);
+	if (size(muts))
+	{
+		mut = NULL;
+		minDist = chromLen+1;
+		for (m in muts)
+		{
+			dist = abs(m.position-sweepSite);
+			if (dist < minDist & sim.mutationFrequencies(p1, m) > 0)
+			{
+				minDist = dist;
+				mut = m;
+			}
+		}
+		cat("desired sweep site:" + sweepSite + "\n");
+		cat("chosen mut:" + mut.id + "\n");
+		mut.setMutationType(m2);
+		mut.setSelectionCoeff(selCoeff);
+		defineConstant("sweepMutId", mut.id);
+
+		cat(simID + ": chose polymorphism at position " + mut.position + " and frequencies " + sim.mutationFrequencies(p1, mut) + " and " + sim.mutationFrequencies(p2, mut) + " to become beneficial at generation " + sim.generation + "\n\n");
+	}
+	else
+	{
+		cat(simID + ": failed to switch from neutral to beneficial at gen " + sim.generation + "\n");
+	}	
+}
+
+function (void) restartSweepPhaseForMut(integer mutId)
+{
+	
+	cat("desired sweep site:" + sweepSite + "\n");
+	mutFound = 0;
+	for (m in sim.mutations)
+	{
+		if (m.id == mutId)
+		{
+			mut = m;
+			mutFound = mutFound + 1;
+		}
+	}
+	if (mutFound != 1)
+	{
+		cat("ERROR: looking for mut with id " + mutId + "; but " + mutFound + " mutations match this id\n");
+		stop();
+	}
+	cat("chosen mut:" + mut.id + "\n");
+	mut.setMutationType(m2);
+	mut.setSelectionCoeff(selCoeff);
+
+	cat(simID + ": chose polymorphism at position " + mut.position + " and frequencies " + sim.mutationFrequencies(p1, mut) + " and " + sim.mutationFrequencies(p2, mut) + " to become beneficial at generation " + sim.generation + "\n\n");
+}
+
+s5 2500 late()
+{
+        	//keeping track of the number of attempts it takes to get a fixation
+	defineConstant("attempts", 1);
+		switchMutTypeNearPos(sweepSite);
+		// save the state of the simulation	
+		cat("SAVING TO " + dumpDir + "/slim_" + simID + ".dump\n");
+		sim.outputFull(dumpDir + "/slim_" + simID + ".dump");
+}
+
+s6 2500:3500 late() {
+	muts = sim.mutationsOfType(m2);
+	
+			if (size(muts) > 0)
+			{
+				freq1 = sim.mutationFrequencies(p1, muts)[0];
+				freq2 = sim.mutationFrequencies(p2, muts)[0];
+				cat("SEGREGATING at " + freq1 + " and " + freq2 + " at generation " + sim.generation + "\n");
+                                		//completedAttempts = attempts;
+		//rm(variableNames="attempts", removeConstants=T);
+		//defineConstant("attempts", completedAttempts+1);
+                //cat('TOTAL ATTEMPTS SO FAR : ' + attempts + '\n');
+			}
+			else
+			{
+				fixed = (sum(sim.substitutions.mutationType == m2) == 1);
+				if (fixed)
+				{
+					cat("NO LONGER SEGREGATING at generation " + sim.generation + "; mut was FIXED\n");
+					cat("TOOK " + attempts + " TRIES TO GET A FIXATION\n");
+					sim.deregisterScriptBlock(self);
+				}
+				else
+				{
+					completedAttempts = attempts;
+					rm(variableNames="attempts", removeConstants=T);
+					defineConstant("attempts", completedAttempts+1);
+					cat('TOTAL ATTEMPTS SO FAR : ' + attempts + '\n');
+					newSeed = rdunif(1, 0, asInteger(2^62) - 1);
+					setSeed(newSeed);
+					cat("NO LONGER SEGREGATING at gen " + sim.generation + "; mut was LOST -- RESTARTING WITH A NEW SEED OF " + newSeed + "\n");
+					cat("READING FROM " + dumpDir + "/slim_" + simID + ".dump\n");
+					sim.readFromPopulationFile(dumpDir + "/slim_" + simID + ".dump");
+					restartSweepPhaseForMut(sweepMutId); //seems weird to me that we have to do this again, but this is the only way i can get the mutation to be of the right type after we restart
+				}
+			}
+	}
+
+
+s7 3500 
+{
+	cat('ADMIXTURE GENERATION : ' +  admixGen+ ' \n');
+
+	
+	afr_pop = 0.75; // african proportion ranging from 70% to 80%
+	cat('AFRICAN PROPORTION : ' +  afr_pop + ' \n');
+	eur_pop = 1 - afr_pop;
+	cat('EUROPEAN PROPORTION : ' +  eur_pop + ' \n');
+	
+	//afrAmrSize = asInteger((afr_pop *  afFinalSize) + (eur_pop * euFinalSize));
+	
+	cat('AFRICAN AMERICAN POPULATION SIZE : ' + afrAmrSize + '\n');
+	
+	sim.addSubpop('p3',afrAmrSize);
+	p3.setMigrationRates(c(p1,p2),c(afr_pop,eur_pop));
+	
+
+}
+
+
+s8 3500 {
+	p3.setMigrationRates(c(p1,p2),c(0.0,0.0));
+}
+
+
+s9 3500:3507
+{
+	newSize = asInteger(round((1+euGrowth2)^(sim.generation - (afGrowthTime-1)) * euInterSize));
+	doneEu=F;
+	if (newSize >= afrAmrFinalSize)
+	{
+		newSize = afrAmrFinalSize;
+		doneEu=T;
+	}
+	p3.setSubpopulationSize(newSize);
+
+}
+
+s10 3507 late()
+{
+		muts = sim.mutationsOfType(m2);
+	if (size(muts) > 0)
+	{
+		cat("FINAL FREQUENCIES IN P1 AND P3: " + sim.mutationFrequencies(p1, muts)[0] + ", " + sim.mutationFrequencies(p3, muts)[0] + " at gen " + sim.generation + "\n");
+	}
+	else
+	{
+		cat("FINAL FREQUENCY: NO LONGER SEGREGATING\n");
+	}
+    cat('sweep Mut Gen = ' + sweepMutGen + '\n');
+    cat('SELECTION COEFF = ' + selCoeff + '\n');
+    cat('random Draw For Neut = ' + randomDrawForNeut + '\n');
+    cat('Neutral time = '+ neutTime + '\n');
+
+	p1.setSubpopulationSize(0);
+	p2.setSubpopulationSize(0);
+	//cat("SAVING TO " + dumpDir + "/slim_" + simID + "_soft_FIXED_5.trees\n");
+	//sim.treeSeqOutput(dumpDir + "/slim_" + simID + "_soft_FIXED_5.trees");
+	
+    if (sim.mutationFrequencies(p3, muts)[0] > 0.50)
+    {
+        p3.outputMSSample(144,replace=F,filePath=dir+'/slim_' + simID + '_soft_FIXED_5.msOut');
+    }
+	sim.simulationFinished();
+    
+}
+
+1 { //here we add our ancient subpopulation, schedule our event blocks above, and get to work!
+	// save this run's identifier, used to save and restore
+	defineConstant("simID", getSeed());
+	sim.addSubpop("p1", ancPopSize);
+	sim.rescheduleScriptBlock(s1, start=ancExpTime, end=ancExpTime);
+	sim.rescheduleScriptBlock(s2, start=splitTime, end=splitTime);
+	sim.rescheduleScriptBlock(s3, start=euBotTime, end=afGrowthTime);
+	sim.rescheduleScriptBlock(s4, start=afGrowthTime, end=totGens);
+	sim.rescheduleScriptBlock(s5, start=sweepMutGen+neutTime, end=sweepMutGen+neutTime);
+	sim.rescheduleScriptBlock(s6, start=sweepMutGen+neutTime, end=totGens);
+	sim.rescheduleScriptBlock(s7, start=admixGen, end=admixGen);
+	sim.rescheduleScriptBlock(s8, start=admixGen+1, end=admixGen+1);
+	sim.rescheduleScriptBlock(s9, start=AfrAmrGrowthTime, end=totGens);
+	sim.rescheduleScriptBlock(s10, start=totGens, end=totGens);
+}
+fitness(m2, p2) { return 1.0;}
